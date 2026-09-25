@@ -1,6 +1,7 @@
 use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
+use crate::termwindow::cursoranim::{Rect, RenderedCursor};
 use crate::termwindow::render::{
     same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
     RenderScreenLineParams,
@@ -335,6 +336,7 @@ impl crate::TermWindow {
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
                 error: Option<anyhow::Error>,
+                rendered_cursor: Option<RenderedCursor>,
             }
 
             let left_pixel_x = padding_left
@@ -365,6 +367,7 @@ impl crate::TermWindow {
                 window_is_transparent,
                 layers,
                 error: None,
+                rendered_cursor: None,
             };
 
             impl<'a, 'b> LineRender<'a, 'b> {
@@ -462,6 +465,9 @@ impl crate::TermWindow {
                                 .layers
                                 .apply_to(self.layers)
                                 .context("cached_quad.layers.apply_to")?;
+                            if cached_quad.cursor.is_some() {
+                                self.rendered_cursor = cached_quad.cursor;
+                            }
                             self.term_window.update_next_frame_time(cached_quad.expires);
                             return Ok(());
                         }
@@ -534,8 +540,13 @@ impl crate::TermWindow {
                     buf.apply_to(self.layers)
                         .context("HeapQuadAllocator::apply_to")?;
 
+                    if render_result.cursor.is_some() {
+                        self.rendered_cursor = render_result.cursor;
+                    }
+
                     let quad_value = LineQuadCacheValue {
                         layers: buf,
+                        cursor: render_result.cursor,
                         expires,
                         invalidate_on_hover_change: render_result.invalidate_on_hover_change,
                         current_highlight: if render_result.invalidate_on_hover_change {
@@ -569,6 +580,16 @@ impl crate::TermWindow {
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling with_lines_mut");
             }
+
+            let rendered_cursor = render.rendered_cursor;
+            let pane_rect = Rect::new(
+                left_pixel_x,
+                top_pixel_y + pos.top as f32 * cell_height,
+                pos.width as f32 * cell_width,
+                pos.height as f32 * cell_height,
+            );
+            self.paint_cursor_animation(pos, rendered_cursor, pane_rect, layers)
+                .context("paint_cursor_animation")?;
         }
 
         /*

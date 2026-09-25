@@ -3,6 +3,7 @@ use crate::bell::{AudibleBell, EasingFunction, VisualBell};
 use crate::color::{
     ColorSchemeFile, HsbTransform, Palette, SrgbaTuple, TabBarStyle, WindowFrameConfig,
 };
+use crate::cursor_animation::CursorAnimation;
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
@@ -851,6 +852,9 @@ pub struct Config {
 
     #[dynamic(default)]
     pub visual_bell: VisualBell,
+
+    #[dynamic(default)]
+    pub cursor_animation: CursorAnimation,
 
     #[dynamic(default)]
     pub audible_bell: AudibleBell,

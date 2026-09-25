@@ -73,6 +73,7 @@ pub mod background;
 pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
+pub mod cursoranim;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
@@ -205,6 +206,7 @@ pub struct PaneState {
 
     bell_start: Option<Instant>,
     pub mouse_terminal_coords: Option<(ClickPosition, StableRowIndex)>,
+    cursor_anim: cursoranim::CursorAnimState,
 }
 
 /// Data used when synchronously formatting pane and window titles
@@ -405,6 +407,8 @@ pub struct TermWindow {
     window_drag_position: Option<MouseEvent>,
     current_mouse_event: Option<MouseEvent>,
     prev_cursor: PrevCursorPos,
+    /// Reused vertex buffers for the cursor animation
+    cursor_anim_scratch: RefCell<cursoranim::Scratch>,
     last_scroll_info: RenderableDimensions,
 
     tab_state: RefCell<HashMap<TabId, TabState>>,
@@ -460,6 +464,9 @@ pub struct TermWindow {
     pub last_frame_duration: Duration,
     last_fps_check_time: Instant,
     num_frames: usize,
+    /// Incremented once per painted frame; lets the cursor animation
+    /// notice panes that were not painted for a while
+    paint_generation: usize,
     pub fps: f32,
 
     connection_name: String,
@@ -686,6 +693,7 @@ impl TermWindow {
             connection_name,
             last_fps_check_time: Instant::now(),
             num_frames: 0,
+            paint_generation: 0,
             last_frame_duration: Duration::ZERO,
             fps: 0.,
             config_subscription: None,
@@ -724,6 +732,7 @@ impl TermWindow {
             current_mouse_event: None,
             current_modifier_and_leds: Default::default(),
             prev_cursor: PrevCursorPos::new(),
+            cursor_anim_scratch: RefCell::default(),
             last_scroll_info: RenderableDimensions::default(),
             tab_state: RefCell::new(HashMap::new()),
             pane_state: RefCell::new(HashMap::new()),

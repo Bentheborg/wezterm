@@ -24,7 +24,7 @@ const IS_COLOR_EMOJI: f32 = 1.0;
 const IS_BG_IMAGE: f32 = 2.0;
 /// like 2.0, except that instead of an
 /// image, we use the solid bg color
-const IS_SOLID_COLOR: f32 = 3.0;
+pub(crate) const IS_SOLID_COLOR: f32 = 3.0;
 /// Grayscale poly quad for non-aa text render layers
 const IS_GRAY_SCALE: f32 = 4.0;
 
