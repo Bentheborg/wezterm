@@ -16,6 +16,9 @@ pub struct PaintStats {
     pub wm_paint_throttled: AtomicU64,
     pub wm_paint_dispatched: AtomicU64,
     pub throttle_count: AtomicU64,
+    /// Target frame interval (1/max_fps)
+    pub throttle_interval_ns: AtomicU64,
+    /// Remaining wait until the frame deadline when the timer was armed
     pub throttle_requested_ns: AtomicU64,
     pub throttle_actual_ns: AtomicU64,
     pub throttle_actual_max_ns: AtomicU64,
@@ -27,6 +30,7 @@ pub struct PaintStatsSnapshot {
     pub wm_paint_throttled: u64,
     pub wm_paint_dispatched: u64,
     pub throttle_count: u64,
+    pub throttle_interval_ns: u64,
     pub throttle_requested_ns: u64,
     pub throttle_actual_ns: u64,
     pub throttle_actual_max_ns: u64,
@@ -45,6 +49,8 @@ impl PaintStats {
             wm_paint_throttled: t(&self.wm_paint_throttled),
             wm_paint_dispatched: t(&self.wm_paint_dispatched),
             throttle_count: t(&self.throttle_count),
+            throttle_interval_ns: t(&self.throttle_interval_ns),
+
             throttle_requested_ns: t(&self.throttle_requested_ns),
             throttle_actual_ns: t(&self.throttle_actual_ns),
             throttle_actual_max_ns: t(&self.throttle_actual_max_ns),

@@ -1638,6 +1638,10 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
             PaintStats::add(&stats.wm_paint_throttled, 1);
         }
         inner.invalidated = true;
+        // Consume the update region; otherwise Windows keeps
+        // re-sending WM_PAINT until the throttle timer fires.
+        // The timer re-invalidates if `invalidated` is set.
+        ValidateRect(hwnd, null());
         return Some(0);
     }
 
@@ -1662,19 +1666,23 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     if let Some(stats) = &stats {
         PaintStats::add(&stats.wm_paint_dispatched, 1);
     }
+    // The next paint is allowed one frame interval after this one
+    // started, rather than a full interval after it finished.
+    let interval = std::time::Duration::from_nanos(1_000_000_000 / inner.config.max_fps);
+    let deadline = std::time::Instant::now() + interval;
     // Ask the app to repaint in a bit
     inner.events.dispatch(WindowEvent::NeedRepaint);
 
     inner.paint_throttled = true;
     let window_id = inner.hwnd;
-    let max_fps = inner.config.max_fps;
     promise::spawn::spawn(async move {
-        let requested = std::time::Duration::from_millis(1000 / max_fps as u64);
         let throttle_start = std::time::Instant::now();
-        async_io::Timer::after(requested).await;
+        let requested = deadline.saturating_duration_since(throttle_start);
+        async_io::Timer::at(deadline).await;
         if let Some(stats) = &stats {
             let actual = throttle_start.elapsed().as_nanos() as u64;
             PaintStats::add(&stats.throttle_count, 1);
+            PaintStats::add(&stats.throttle_interval_ns, interval.as_nanos() as u64);
             PaintStats::add(&stats.throttle_requested_ns, requested.as_nanos() as u64);
             PaintStats::add(&stats.throttle_actual_ns, actual);
             stats

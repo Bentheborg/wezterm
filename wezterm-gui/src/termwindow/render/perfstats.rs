@@ -226,10 +226,11 @@ impl RenderPerfStats {
             let _ = writeln!(
                 out,
                 "  wm_paint/s received={:.1} throttled={:.1} dispatched={:.1} | \
-                 throttle requested={:.2}ms actual avg={:.2}ms max={:.2}ms",
+                 throttle interval={:.2}ms requested={:.2}ms actual avg={:.2}ms max={:.2}ms",
                 rate(p.wm_paint_received),
                 rate(p.wm_paint_throttled),
                 rate(p.wm_paint_dispatched),
+                avg(p.throttle_interval_ns),
                 avg(p.throttle_requested_ns),
                 avg(p.throttle_actual_ns),
                 ms(p.throttle_actual_max_ns),
