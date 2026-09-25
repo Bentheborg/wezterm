@@ -41,6 +41,8 @@ pub mod draw;
 pub mod fancy_tab_bar;
 pub mod paint;
 pub mod pane;
+pub mod perfstats;
+
 pub mod screen_line;
 pub mod split;
 pub mod tab_bar;
@@ -827,7 +829,8 @@ impl crate::TermWindow {
 
                 let presentation_width = PresentationWidth::with_cluster(&cluster);
 
-                match font.shape(
+                let shape_start = Instant::now();
+                let shape_result = font.shape(
                     &cluster.text,
                     move || window.notify(TermWindowNotif::InvalidateShapeCache),
                     BlockKey::filter_out_synthetic,
@@ -835,7 +838,13 @@ impl crate::TermWindow {
                     cluster.direction,
                     None, // FIXME: need more paragraph context
                     Some(&presentation_width),
-                ) {
+                );
+                if let Ok(mut perf) = self.render_perf.try_borrow_mut() {
+                    if perf.enabled {
+                        perf.record_harfbuzz(shape_start.elapsed());
+                    }
+                }
+                match shape_result {
                     Ok(info) => {
                         let glyphs = self.glyph_infos_to_glyphs(
                             &style,

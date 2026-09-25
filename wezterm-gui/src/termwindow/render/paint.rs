@@ -24,6 +24,10 @@ impl crate::TermWindow {
         self.allow_images = AllowImage::Yes;
 
         let start = Instant::now();
+        let perf_on = self.render_perf.borrow().enabled;
+        if perf_on {
+            self.report_render_perf();
+        }
 
         {
             let diff = start.duration_since(self.last_fps_check_time);
@@ -36,6 +40,9 @@ impl crate::TermWindow {
         }
 
         'pass: for pass in 0.. {
+            if perf_on {
+                self.render_perf.borrow_mut().record_paint_pass();
+            }
             match self.paint_pass() {
                 Ok(_) => match self.render_state.as_mut().unwrap().allocated_more_quads() {
                     Ok(allocated) => {
@@ -106,8 +113,26 @@ impl crate::TermWindow {
         }
         log::debug!("paint_impl before call_draw elapsed={:?}", start.elapsed());
 
+        let quads = if perf_on {
+            let mut quads = 0;
+            for layer in self.render_state.as_ref().unwrap().layers.borrow().iter() {
+                for vb in layer.vb.borrow().iter() {
+                    quads += vb.vertex_index_count().0 / crate::quad::VERTICES_PER_CELL;
+                }
+            }
+            quads as u64
+        } else {
+            0
+        };
+
+        let draw_start = Instant::now();
         self.call_draw(frame).ok();
         self.last_frame_duration = start.elapsed();
+        if perf_on {
+            let mut perf = self.render_perf.borrow_mut();
+            perf.record_call_draw(draw_start.elapsed());
+            perf.record_frame(self.last_frame_duration, quads);
+        }
         log::debug!(
             "paint_impl elapsed={:?}, fps={}",
             self.last_frame_duration,
@@ -145,6 +170,30 @@ impl crate::TermWindow {
                 }
             }
         }
+    }
+
+    /// Emits the once-per-second render-stats block (WEZTERM_RENDER_STATS=1)
+    fn report_render_perf(&mut self) {
+        if !self.render_perf.borrow().report_due() {
+            return;
+        }
+        let paint = self
+            .window
+            .as_ref()
+            .and_then(|w| w.paint_stats())
+            .map(|s| s.take());
+        let (cols, rows) = (
+            self.terminal_size.cols as usize,
+            self.terminal_size.rows as usize,
+        );
+        let max_fps = self.config.max_fps;
+        self.render_perf.borrow_mut().maybe_report(
+            cols,
+            rows,
+            max_fps,
+            paint,
+            mux::parserperf::take,
+        );
     }
 
     pub fn paint_modal(&mut self) -> anyhow::Result<()> {
@@ -186,6 +235,10 @@ impl crate::TermWindow {
         let mut layers = layer.quad_allocator();
         log::trace!("quad map elapsed {:?}", start.elapsed());
         metrics::histogram!("quad.map").record(start.elapsed());
+        let perf_on = self.render_perf.borrow().enabled;
+        if perf_on {
+            self.render_perf.borrow_mut().record_map(start.elapsed());
+        }
 
         let mut paint_terminal_background = false;
 
@@ -275,7 +328,13 @@ impl crate::TermWindow {
 
         self.paint_window_borders(&mut layers)
             .context("paint_window_borders")?;
+        let unmap_start = Instant::now();
         drop(layers);
+        if perf_on {
+            self.render_perf
+                .borrow_mut()
+                .record_unmap(unmap_start.elapsed());
+        }
         self.paint_modal().context("paint_modal")?;
 
         Ok(())

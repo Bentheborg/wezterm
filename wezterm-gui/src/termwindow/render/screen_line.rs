@@ -134,6 +134,11 @@ impl crate::TermWindow {
                 if !expired && !hover_changed {
                     self.update_next_frame_time(entry.expires);
                     shaped.replace(Rc::clone(&entry.shaped));
+                    if let Ok(mut perf) = self.render_perf.try_borrow_mut() {
+                        if perf.enabled {
+                            perf.line_shape_cache_hit = true;
+                        }
+                    }
                 }
 
                 invalidate_on_hover_change = entry.invalidate_on_hover_change;

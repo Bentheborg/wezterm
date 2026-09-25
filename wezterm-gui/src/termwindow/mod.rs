@@ -462,6 +462,8 @@ pub struct TermWindow {
     created: Instant,
 
     pub last_frame_duration: Duration,
+    /// Phase-1 render-latency counters; inert unless WEZTERM_RENDER_STATS=1
+    pub render_perf: RefCell<crate::termwindow::render::perfstats::RenderPerfStats>,
     last_fps_check_time: Instant,
     num_frames: usize,
     /// Incremented once per painted frame; lets the cursor animation
@@ -695,6 +697,7 @@ impl TermWindow {
             num_frames: 0,
             paint_generation: 0,
             last_frame_duration: Duration::ZERO,
+            render_perf: RefCell::new(Default::default()),
             fps: 0.,
             config_subscription: None,
             os_parameters: None,
@@ -1094,7 +1097,14 @@ impl TermWindow {
             ),
         );
         self.paint_impl(&mut RenderFrame::Glium(&mut frame));
-        window.finish_frame(frame).is_ok()
+        let present_start = Instant::now();
+        let ok = window.finish_frame(frame).is_ok();
+        if self.render_perf.borrow().enabled {
+            self.render_perf
+                .borrow_mut()
+                .record_present(present_start.elapsed());
+        }
+        ok
     }
 
     fn do_paint_webgpu(&mut self) -> anyhow::Result<bool> {
