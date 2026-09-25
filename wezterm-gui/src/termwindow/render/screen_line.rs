@@ -1,4 +1,5 @@
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
+use crate::termwindow::cursoranim::{CursorKind, Rect, RenderedCursor};
 use crate::termwindow::render::{
     resolve_fg_color_attr, same_hyperlink, update_next_frame_time, ClusterStyleCache,
     ComputeCellFgBgParams, ComputeCellFgBgResult, LineToElementParams, LineToElementShape,
@@ -34,6 +35,7 @@ impl crate::TermWindow {
             // rendering the top row, so we have nothing more to do here.
             return Ok(RenderScreenLineResult {
                 invalidate_on_hover_change: false,
+                cursor: None,
             });
         }
 
@@ -320,6 +322,8 @@ impl crate::TermWindow {
             }
         }
 
+        let mut rendered_cursor = None;
+
         // Consider cursor
         if !cursor_range.is_empty() {
             let (fg_color, bg_color) = if let Some(c) = &cursor_cell {
@@ -366,6 +370,35 @@ impl crate::TermWindow {
                 + (phys(params.cursor.x, num_cols, direction) as f32 * cell_width);
 
             if let Some(shape) = cursor_shape {
+                // Record the cursor as drawn, for the cursor animation
+                let kind = CursorKind::from_shape(shape);
+                let x = pos_x - gl_x;
+                let width = (cursor_range.end - cursor_range.start) as f32 * cell_width;
+                let thickness = || {
+                    gl_state
+                        .glyph_cache
+                        .borrow()
+                        .cursor_stroke_thickness(&params.render_metrics)
+                };
+                let rect = match kind {
+                    CursorKind::Block => Rect::new(x, params.top_pixel_y, width, cell_height),
+                    CursorKind::Bar => Rect::new(
+                        x,
+                        params.top_pixel_y,
+                        (thickness() * width_scale).min(width),
+                        cell_height,
+                    ),
+                    CursorKind::Underline => {
+                        let h = (thickness() * height_scale).min(cell_height);
+                        Rect::new(x, params.top_pixel_y + cell_height - h, width, h)
+                    }
+                };
+                rendered_cursor = Some(RenderedCursor {
+                    rect,
+                    kind,
+                    color: cursor_border_color,
+                });
+
                 let cursor_layer = match shape {
                     CursorShape::BlinkingBar | CursorShape::SteadyBar => 2,
                     _ => 0,
@@ -734,6 +767,7 @@ impl crate::TermWindow {
 
         Ok(RenderScreenLineResult {
             invalidate_on_hover_change,
+            cursor: rendered_cursor,
         })
     }
 

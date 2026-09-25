@@ -650,6 +650,9 @@ pub enum PolyStyle {
     OutlineHeavy,
 }
 
+/// NOTE: Changing this makes block cursor disproportionate at different font sizes and resolutions
+const OUTLINE_HEAVY_SCALE: f32 = 3.01;
+
 impl PolyStyle {
     fn apply(self, width: f32, paint: &Paint, path: &Path, pixmap: &mut PixmapMut) {
         match self {
@@ -664,7 +667,7 @@ impl PolyStyle {
                 let mut stroke = Stroke::default();
                 stroke.width = width;
                 if self == PolyStyle::OutlineHeavy {
-                    stroke.width *= 3.01; // NOTE: Changing this makes block cursor disproportionate at different font sizes and resolutions
+                    stroke.width *= OUTLINE_HEAVY_SCALE;
                 } else if self == PolyStyle::OutlineThin {
                     stroke.width = 1.2;
                 } else if self == PolyStyle::OutlineAlpha {
@@ -5048,6 +5051,24 @@ impl GlyphCache {
         }
     }
 
+    fn cursor_line_height(&self, metrics: &RenderMetrics) -> isize {
+        match &self.fonts.config().cursor_thickness {
+            Some(d) => d.evaluate_as_pixels(DimensionContext {
+                dpi: self.fonts.get_dpi() as f32,
+                pixel_max: metrics.underline_height as f32,
+                pixel_cell: metrics.cell_size.height as f32,
+            }) as isize,
+            None => metrics.underline_height,
+        }
+    }
+
+    /// Visible thickness of the bar and underline cursors drawn by
+    /// `cursor_sprite`: the stroke is centered on the cell edge,
+    /// so half of it falls outside the cell.
+    pub fn cursor_stroke_thickness(&self, metrics: &RenderMetrics) -> f32 {
+        self.cursor_line_height(metrics) as f32 * OUTLINE_HEAVY_SCALE / 2.
+    }
+
     pub fn cursor_sprite(
         &mut self,
         shape: Option<CursorShape>,
@@ -5059,13 +5080,7 @@ impl GlyphCache {
         }
 
         let mut metrics = metrics.scale_cell_width(width as f64);
-        if let Some(d) = &self.fonts.config().cursor_thickness {
-            metrics.underline_height = d.evaluate_as_pixels(DimensionContext {
-                dpi: self.fonts.get_dpi() as f32,
-                pixel_max: metrics.underline_height as f32,
-                pixel_cell: metrics.cell_size.height as f32,
-            }) as isize;
-        }
+        metrics.underline_height = self.cursor_line_height(&metrics);
 
         let mut buffer = Image::new(
             metrics.cell_size.width as usize,

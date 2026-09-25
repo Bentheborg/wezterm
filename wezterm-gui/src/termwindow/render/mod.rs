@@ -6,6 +6,7 @@ use crate::quad::{
     TripleLayerQuadAllocatorTrait,
 };
 use crate::shapecache::*;
+use crate::termwindow::cursoranim::RenderedCursor;
 use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::{BorrowedShapeCacheKey, RenderState, ShapedInfo, TermWindowNotif};
 use crate::utilsprites::RenderMetrics;
@@ -81,6 +82,7 @@ pub struct LineQuadCacheValue {
     // that we can invalidate when it changes
     pub current_highlight: Option<Arc<Hyperlink>>,
     pub invalidate_on_hover_change: bool,
+    pub cursor: Option<RenderedCursor>,
 }
 
 pub struct LineToElementParams<'a> {
@@ -121,6 +123,8 @@ pub struct LineToElementShape {
 
 pub struct RenderScreenLineResult {
     pub invalidate_on_hover_change: bool,
+    /// The cursor as drawn on this line, if any
+    pub cursor: Option<RenderedCursor>,
 }
 
 pub struct RenderScreenLineParams<'a> {
