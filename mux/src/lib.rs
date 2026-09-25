@@ -39,6 +39,7 @@ pub mod connui;
 pub mod domain;
 pub mod localpane;
 pub mod pane;
+pub mod parserperf;
 pub mod renderable;
 pub mod ssh;
 pub mod ssh_agent;
@@ -123,8 +124,14 @@ fn send_actions_to_mux(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, actions: V
     let start = Instant::now();
     match pane.upgrade() {
         Some(pane) => {
+            let num_actions = actions.len();
             pane.perform_actions(actions);
-            histogram!("send_actions_to_mux.perform_actions.latency").record(start.elapsed());
+            let elapsed = start.elapsed();
+            histogram!("send_actions_to_mux.perform_actions.latency").record(elapsed);
+            if parserperf::render_stats_enabled() {
+                parserperf::record(pane.pane_id(), num_actions, elapsed.as_nanos() as u64);
+            }
+
             Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane.pane_id()));
         }
         None => {

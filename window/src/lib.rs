@@ -13,6 +13,7 @@ pub use wezterm_color_types as color;
 mod configuration;
 pub mod connection;
 pub mod os;
+pub mod paintstats;
 pub mod screen;
 mod spawn;
 
@@ -268,6 +269,13 @@ pub trait WindowOps {
     /// Invalidate the window so that the entire client area will
     /// be repainted shortly
     fn invalidate(&self);
+
+    /// WM_PAINT/throttle counters for render-latency profiling.
+    /// Only implemented on Windows, and only when
+    /// `paintstats::render_stats_enabled()` is true.
+    fn paint_stats(&self) -> Option<std::sync::Arc<crate::paintstats::PaintStats>> {
+        None
+    }
 
     /// Change the titlebar text for the window
     fn set_title(&self, title: &str);

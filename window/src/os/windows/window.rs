@@ -869,6 +869,14 @@ impl WindowOps for Window {
         }
     }
 
+    fn paint_stats(&self) -> Option<std::sync::Arc<crate::paintstats::PaintStats>> {
+        if crate::paintstats::render_stats_enabled() {
+            Some(crate::paintstats::paint_stats_for(self.0 .0 as usize))
+        } else {
+            None
+        }
+    }
+
     fn set_title(&self, title: &str) {
         let title = title.to_owned();
         Connection::with_window_inner(self.0, move |inner| {
@@ -1115,6 +1123,9 @@ unsafe fn wm_ncdestroy(
         let inner = take_rc_from_pointer(raw);
         let mut inner = inner.borrow_mut();
         inner.events.dispatch(WindowEvent::Destroyed);
+        if crate::paintstats::render_stats_enabled() {
+            crate::paintstats::forget_paint_stats(hwnd as usize);
+        }
         inner.hwnd = HWindow(null_mut());
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }
@@ -1612,7 +1623,20 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
 
+    use crate::paintstats::{paint_stats_for, render_stats_enabled, PaintStats};
+    let stats = if render_stats_enabled() {
+        Some(paint_stats_for(hwnd as usize))
+    } else {
+        None
+    };
+    if let Some(stats) = &stats {
+        PaintStats::add(&stats.wm_paint_received, 1);
+    }
+
     if inner.paint_throttled {
+        if let Some(stats) = &stats {
+            PaintStats::add(&stats.wm_paint_throttled, 1);
+        }
         inner.invalidated = true;
         return Some(0);
     }
@@ -1635,6 +1659,9 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     EndPaint(hwnd, &mut ps);
 
     inner.invalidated = false;
+    if let Some(stats) = &stats {
+        PaintStats::add(&stats.wm_paint_dispatched, 1);
+    }
     // Ask the app to repaint in a bit
     inner.events.dispatch(WindowEvent::NeedRepaint);
 
@@ -1642,7 +1669,18 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     let window_id = inner.hwnd;
     let max_fps = inner.config.max_fps;
     promise::spawn::spawn(async move {
-        async_io::Timer::after(std::time::Duration::from_millis(1000 / max_fps as u64)).await;
+        let requested = std::time::Duration::from_millis(1000 / max_fps as u64);
+        let throttle_start = std::time::Instant::now();
+        async_io::Timer::after(requested).await;
+        if let Some(stats) = &stats {
+            let actual = throttle_start.elapsed().as_nanos() as u64;
+            PaintStats::add(&stats.throttle_count, 1);
+            PaintStats::add(&stats.throttle_requested_ns, requested.as_nanos() as u64);
+            PaintStats::add(&stats.throttle_actual_ns, actual);
+            stats
+                .throttle_actual_max_ns
+                .fetch_max(actual, std::sync::atomic::Ordering::Relaxed);
+        }
         Connection::with_window_inner(window_id, move |inner| {
             inner.paint_throttled = false;
             if inner.invalidated {

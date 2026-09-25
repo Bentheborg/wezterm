@@ -2,6 +2,7 @@ use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::cursoranim::{Rect, RenderedCursor};
+use crate::termwindow::render::perfstats;
 use crate::termwindow::render::{
     same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
     RenderScreenLineParams,
@@ -16,6 +17,7 @@ use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::PositionedPane;
 use ordered_float::NotNan;
 use std::time::Instant;
+use termwiz::surface::SequenceNo;
 use wezterm_dynamic::Value;
 use wezterm_term::color::{ColorAttribute, ColorPalette};
 use wezterm_term::{Line, StableRowIndex};
@@ -337,11 +339,20 @@ impl crate::TermWindow {
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
                 error: Option<anyhow::Error>,
                 rendered_cursor: Option<RenderedCursor>,
+                perf_on: bool,
+                clean_threshold: Option<SequenceNo>,
             }
 
             let left_pixel_x = padding_left
                 + border.left.get() as f32
                 + (pos.left as f32 * self.render_metrics.cell_size.width as f32);
+
+            let perf_on = self.render_perf.borrow().enabled;
+            let clean_threshold = if perf_on {
+                self.render_perf.borrow_mut().begin_pane(pane_id)
+            } else {
+                None
+            };
 
             let mut render = LineRender {
                 term_window: self,
@@ -368,6 +379,8 @@ impl crate::TermWindow {
                 layers,
                 error: None,
                 rendered_cursor: None,
+                perf_on,
+                clean_threshold,
             };
 
             impl<'a, 'b> LineRender<'a, 'b> {
@@ -378,6 +391,19 @@ impl crate::TermWindow {
                     line: &&mut Line,
                 ) -> anyhow::Result<()> {
                     let stable_row = stable_top + line_idx as StableRowIndex;
+                    if self.perf_on {
+                        let mut perf = self.term_window.render_perf.borrow_mut();
+                        perf.note_line_seqno(line.current_seqno());
+                        let clean = self
+                            .clean_threshold
+                            .map_or(false, |seqno| !line.changed_since(seqno));
+                        if let Some(p) = perf.pane() {
+                            p.rows += 1;
+                            if clean {
+                                p.clean_rows += 1;
+                            }
+                        }
+                    }
                     let selrange = self
                         .selrange
                         .map_or(0..0, |sel| sel.cols_for_row(stable_row, self.rectangular));
@@ -445,6 +471,7 @@ impl crate::TermWindow {
                         reverse_video: self.dims.reverse_video,
                     };
 
+                    let mut stale_entry = false;
                     if let Some(cached_quad) =
                         self.term_window.line_quad_cache.borrow_mut().get(&quad_key)
                     {
@@ -461,18 +488,36 @@ impl crate::TermWindow {
                             false
                         };
                         if !expired && !hover_changed {
+                            let hit_start = self.perf_on.then(Instant::now);
                             cached_quad
                                 .layers
                                 .apply_to(self.layers)
                                 .context("cached_quad.layers.apply_to")?;
+                            if self.perf_on {
+                                let elapsed = hit_start.map(|s| s.elapsed()).unwrap_or_default();
+                                let mut perf = self.term_window.render_perf.borrow_mut();
+                                if let Some(p) = perf.pane() {
+                                    p.quad_hits += 1;
+                                    p.hit_ns += perfstats::ns(elapsed);
+                                    p.quads_copied_on_hit += cached_quad.layers.len() as u64;
+                                }
+                            }
                             if cached_quad.cursor.is_some() {
                                 self.rendered_cursor = cached_quad.cursor;
                             }
                             self.term_window.update_next_frame_time(cached_quad.expires);
                             return Ok(());
                         }
+                        stale_entry = true;
                     }
 
+                    let miss_start = self.perf_on.then(Instant::now);
+                    if self.perf_on {
+                        self.term_window
+                            .render_perf
+                            .borrow_mut()
+                            .line_shape_cache_hit = false;
+                    }
                     let mut buf = HeapQuadAllocator::default();
                     let next_due = self.term_window.has_animation.borrow_mut().take();
 
@@ -544,6 +589,7 @@ impl crate::TermWindow {
                         self.rendered_cursor = render_result.cursor;
                     }
 
+                    let quads_built = buf.len() as u64;
                     let quad_value = LineQuadCacheValue {
                         layers: buf,
                         cursor: render_result.cursor,
@@ -561,6 +607,23 @@ impl crate::TermWindow {
                         .borrow_mut()
                         .put(quad_key, quad_value);
 
+                    if self.perf_on {
+                        let elapsed = miss_start.map(|s| s.elapsed()).unwrap_or_default();
+                        let mut perf = self.term_window.render_perf.borrow_mut();
+                        let shape_hit = perf.line_shape_cache_hit;
+                        if let Some(p) = perf.pane() {
+                            if stale_entry {
+                                p.miss_expired_or_hover += 1;
+                            } else if shape_hit {
+                                p.miss_moved_or_context += 1;
+                            } else {
+                                p.miss_content += 1;
+                            }
+                            p.miss_ns += perfstats::ns(elapsed);
+                            p.quads_built += quads_built;
+                        }
+                    }
+
                     Ok(())
                 }
             }
@@ -576,7 +639,15 @@ impl crate::TermWindow {
                 }
             }
 
+            let lock_start = Instant::now();
             pos.pane.with_lines_mut(stable_range.clone(), &mut render);
+            if perf_on {
+                render
+                    .term_window
+                    .render_perf
+                    .borrow_mut()
+                    .end_pane(pane_id, lock_start.elapsed());
+            }
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling with_lines_mut");
             }
