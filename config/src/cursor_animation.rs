@@ -179,8 +179,9 @@ pub struct CursorModeChange {
     pub color: Option<RgbaColor>,
     #[dynamic(default, validate = "validate_opt_non_negative")]
     pub blur: Option<f32>,
-    /// Added to the animation progress; positive values skip the start
-    #[dynamic(default, validate = "validate_finite")]
+    /// Added to the animation progress, in the range 0.0 <= offset < 1.0;
+    /// positive values skip the start of the animation
+    #[dynamic(default, validate = "validate_start_offset")]
     pub animation_start_offset: f32,
     /// Ripple / SonicBoom radius; None selects the preset default
     #[dynamic(default, validate = "validate_opt_non_negative")]
@@ -313,6 +314,18 @@ fn validate_finite(value: &f32) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("{} is not a finite number", value))
+    }
+}
+
+fn validate_start_offset(value: &f32) -> Result<(), String> {
+    // 1.0 or more would mean the animation is already complete
+    if (0.0..1.0).contains(value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "animation_start_offset must be at least 0.0 and less than 1.0, got {}",
+            value
+        ))
     }
 }
 
@@ -483,6 +496,31 @@ mod test {
             obj(&[("motion", obj(&[("preset", s("Bogus"))]))]),
         ] {
             assert!(parse(bad.clone()).is_err(), "{:?} should be rejected", bad);
+        }
+    }
+
+    #[test]
+    fn start_offset_range() {
+        let parse_offset = |v: f64| {
+            parse(obj(&[(
+                "mode_change",
+                obj(&[("animation_start_offset", Value::F64(v.into()))]),
+            )]))
+        };
+        for ok in [0.0, 0.5, 0.99] {
+            let c = parse_offset(ok).unwrap();
+            assert_eq!(c.mode_change.animation_start_offset, ok as f32);
+        }
+        for bad in [
+            -0.1,
+            -50.0,
+            1.0,
+            1.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert!(parse_offset(bad).is_err(), "{} should be rejected", bad);
         }
     }
 

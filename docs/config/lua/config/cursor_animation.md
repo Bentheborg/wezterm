@@ -146,8 +146,9 @@ cannot spill into neighbouring panes, the tab bar or the padding.
 * `color` - when omitted the effective cursor color is used.
 * `blur` - edge softness in pixels. Default `3.0`, or `1.0` for
   `RectangleRipple`.
-* `animation_start_offset` - added to the animation progress (0.0 - 1.0);
-  positive values skip the start of the animation. Default `0.0`.
+* `animation_start_offset` - added to the animation progress; must be at
+  least `0.0` and less than `1.0`. Positive values skip the start of the
+  animation. Default `0.0`.
 * `max_radius` - `Ripple` and `SonicBoom` size. Default `0.05` for
   `Ripple` and `0.06` for `SonicBoom`.
 * `max_size` - how far `RectangleBoom` and `RectangleRipple` grow beyond
